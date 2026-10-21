@@ -1,0 +1,76 @@
+name: Build Backend Rust
+
+# Workflow reusable untuk lumbung-backend-service. Contoh pemanggil ada di ci/build-rust-web.md.
+on:
+  workflow_call:
+    inputs:
+      postgres-version:
+        type: string
+        default: "16"
+      working-directory:
+        type: string
+        default: "."
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory || '.' }}
+    services:
+      postgres:
+        image: postgres:${{ inputs.postgres-version || '16' }}
+        env:
+          POSTGRES_USER: lumbung_ci
+          POSTGRES_PASSWORD: lumbung_ci
+          POSTGRES_DB: lumbung
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lumbung_ci -d lumbung"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      # Kredensial sekali pakai untuk service container CI; bukan rahasia produksi.
+      DATABASE_URL: postgres://lumbung_ci:lumbung_ci@localhost:5432/lumbung
+      SQLX_OFFLINE: "false"
+      CARGO_TERM_COLOR: always
+    steps:
+      - uses: actions/checkout@v4
+      - name: Larang tes yang di-skip (QA-002)
+        run: |
+          if grep -rEn '#\[(ignore|should_panic\(ignore)' --include='*.rs' src tests 2>/dev/null; then
+            echo "::error::Ditemukan #[ignore]; tes tidak boleh di-skip untuk rilis (QA-002)."
+            exit 1
+          fi
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ inputs.working-directory || '.' }}
+      - name: Pasang sqlx-cli
+        run: cargo install sqlx-cli --locked --no-default-features --features rustls,postgres
+      - name: Terapkan migrasi ke Postgres CI
+        run: sqlx migrate run
+      - name: Periksa data query offline (cargo sqlx prepare --check)
+        run: cargo sqlx prepare --check -- --all-targets
+      - name: Format dan lint
+        run: |
+          cargo fmt --all -- --check
+          cargo clippy --locked --all-targets -- -D warnings
+      - name: Uji (#[sqlx::test] terhadap Postgres asli)
+        run: cargo test --locked
+      - name: Build rilis
+        run: cargo build --release --locked
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-release-${{ github.sha }}
+          path: |
+            ${{ inputs.working-directory || '.' }}/target/release/lumbung-backend-service
+          if-no-files-found: warn
+          retention-days: 30

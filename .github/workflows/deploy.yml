@@ -1,0 +1,61 @@
+name: Deploy per environment
+
+# Reusable + manual. Satu environment GitHub (staging/prod) = satu set secrets/variabel.
+# Aktifkan "Required reviewers" pada environment prod (pengaturan repo; dilakukan manusia).
+on:
+  workflow_call:
+    inputs:
+      environment:
+        type: string
+        required: true
+      version:
+        description: "Versi/tag citra yang dirilis (jejak rilis)."
+        type: string
+        required: true
+    secrets:
+      DATABASE_URL:
+        required: true
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        options: [staging, prod]
+        required: true
+      version:
+        type: string
+        required: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deploy-${{ inputs.environment }}
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: ${{ inputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Coding-Skuy/lumbung-backend-service
+          path: backend
+      - name: Pasang sqlx-cli
+        run: cargo install sqlx-cli --locked --no-default-features --features rustls,postgres
+      - name: Deploy (migrasi, gulir, healthz, rollback otomatis)
+        working-directory: backend
+        env:
+          # DATABASE_URL hanya menunjuk DB logis `lumbung` milik environment ini.
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          ENVIRONMENT: ${{ inputs.environment }}
+          VERSION: ${{ inputs.version }}
+          HEALTH_URL: ${{ vars.HEALTH_URL }}
+          DEPLOY_API_CMD: ${{ vars.DEPLOY_API_CMD }}
+          ROLLBACK_API_CMD: ${{ vars.ROLLBACK_API_CMD }}
+          DEPLOY_WEB_CMD: ${{ vars.DEPLOY_WEB_CMD }}
+        run: ../deploy/scripts/deploy.sh
+      - name: Catat jejak rilis
+        run: echo "- ${{ inputs.environment }} ${{ inputs.version }} $(date -u +%FT%TZ)" >> "$GITHUB_STEP_SUMMARY"

@@ -24,11 +24,12 @@ FAIL_LIMIT=3
 
 log() { printf '[deploy %s %s] %s\n' "$ENVIRONMENT" "$VERSION" "$*"; }
 
-# healthz harus menjawab "ok". Mengembalikan 0 bila sehat.
+# healthz sehat bila HTTP 2xx dan badan memuat status ok: teks `ok` atau JSON {"status":"ok",...}
+# (backend nyata menjawab {"db":"lumbung","status":"ok"}).
 health_ok() {
   local body
   body="$(curl -fsS --max-time 5 "$HEALTH_URL" 2>/dev/null)" || return 1
-  [ "$body" = "ok" ]
+  [ "$body" = "ok" ] || printf '%s' "$body" | grep -Eq '"status"[[:space:]]*:[[:space:]]*"ok"'
 }
 
 rollback() {

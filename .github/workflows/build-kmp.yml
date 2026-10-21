@@ -1,0 +1,145 @@
+name: Build KMP (APK + MSIX)
+
+# Workflow reusable. Dipanggil dari lumbung-app-kmp, contoh ada di ci/build-kmp.md.
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: "Versi rilis (mis. 1.0.0). Dipakai pada nama artefak dan manifest MSIX."
+        type: string
+        required: true
+      java-version:
+        type: string
+        default: "17"
+      msix-runner:
+        description: 'JSON label runner MSIX. Default windows-latest; runner gudang: ["self-hosted","windows","gudang"]'
+        type: string
+        default: '"windows-latest"'
+      build-apk:
+        type: boolean
+        default: true
+      build-msix:
+        type: boolean
+        default: true
+      publish-release:
+        description: "Unggah artefak ke GitHub Release bertag v<version> (butuh contents: write)."
+        type: boolean
+        default: false
+    secrets:
+      ANDROID_KEYSTORE_BASE64:
+        required: false
+      ANDROID_KEYSTORE_PASSWORD:
+        required: false
+      ANDROID_KEY_ALIAS:
+        required: false
+      ANDROID_KEY_PASSWORD:
+        required: false
+      MSIX_PFX_BASE64:
+        required: false
+      MSIX_PFX_PASSWORD:
+        required: false
+  workflow_dispatch:
+    inputs:
+      version:
+        type: string
+        required: true
+        default: "1.0.0"
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    if: ${{ inputs.build-apk != false }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version || '17' }}
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Uji unit (gerbang QA; tidak boleh dilewati)
+        run: ./gradlew :lapangan-mobile:testReleaseUnitTest --no-daemon
+      - name: Siapkan keystore rilis (opsional)
+        env:
+          KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+        run: |
+          if [ -n "$KS_B64" ]; then
+            echo "$KS_B64" | base64 -d > "$RUNNER_TEMP/release.keystore"
+            echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.keystore" >> "$GITHUB_ENV"
+          else
+            echo "::warning::Keystore tidak diset; APK tidak ditandatangani (hanya untuk uji internal)."
+          fi
+      - name: Rakit APK rilis
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: ./gradlew :lapangan-mobile:assembleRelease --no-daemon
+      - name: Ganti nama artefak per versi
+        run: |
+          mkdir -p out
+          find lapangan-mobile/build/outputs/apk/release -name '*.apk' | while read -r f; do
+            cp "$f" "out/lapangan-mobile-${{ inputs.version }}-$(basename "$f")"
+          done
+          ls -l out
+          test -n "$(ls out)" || { echo "::error::APK tidak ditemukan"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lapangan-mobile-apk-${{ inputs.version }}
+          path: out/*.apk
+          retention-days: 90
+          if-no-files-found: error
+
+  msix:
+    if: ${{ inputs.build-msix != false }}
+    runs-on: ${{ fromJSON(inputs.msix-runner || '"windows-latest"') }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Coding-Skuy/lumbung-infra-devops
+          path: .infra
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: ${{ inputs.java-version || '17' }}
+      - uses: gradle/actions/setup-gradle@v4
+      - name: Uji unit desktop (gerbang QA)
+        shell: bash
+        run: ./gradlew :gudang-desktop:jvmTest --no-daemon
+      - name: Rakit MSIX (x64, tanpa auto-update)
+        shell: pwsh
+        env:
+          MSIX_PFX_BASE64: ${{ secrets.MSIX_PFX_BASE64 }}
+          MSIX_PFX_PASSWORD: ${{ secrets.MSIX_PFX_PASSWORD }}
+        run: ./.infra/ci/scripts/package-msix.ps1 -Version "${{ inputs.version }}" -OutDir out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: gudang-desktop-msix-${{ inputs.version }}
+          path: out/*.msix
+          retention-days: 365
+          if-no-files-found: error
+
+  release:
+    if: ${{ inputs.publish-release && !failure() && !cancelled() }}
+    needs: [apk, msix]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Unggah ke GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ inputs.version }}
+        run: |
+          gh release view "$TAG" -R "$GITHUB_REPOSITORY" >/dev/null 2>&1 \
+            || gh release create "$TAG" -R "$GITHUB_REPOSITORY" --title "$TAG" --notes "Rilis $TAG" --draft
+          gh release upload "$TAG" dist/* -R "$GITHUB_REPOSITORY" --clobber

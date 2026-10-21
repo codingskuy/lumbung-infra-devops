@@ -5,7 +5,7 @@ DEV_DIR     := $(CURDIR)/deploy/dev
 COMPOSE      = BACKEND_PORT=$(BACKEND_PORT) BACKEND_DIR=$(BACKEND_DIR) DEV_DIR=$(DEV_DIR) docker compose --env-file $(DEV_DIR)/.env -f $(DEV_DIR)/compose.yaml
 BACKEND_PORT ?= 18480
 
-.PHONY: dev-up dev-down dev-reset dev-logs dev-seed
+.PHONY: dev-up dev-down dev-reset dev-logs dev-seed dev-smoke
 
 dev-up: ## bangun dan nyalakan backend + Postgres (menunggu sehat)
 	@$(DEV_DIR)/gen-env.sh
@@ -24,3 +24,8 @@ dev-seed: ## semai akun uji (butuh contract/seed.py di backend dan uvx); HANYA D
 	@test -f $(BACKEND_DIR)/contract/seed.py || { echo "contract/seed.py tidak ada di $(BACKEND_DIR) (branch uji kontrak backend)"; exit 2; }
 	@set -a; . $(DEV_DIR)/.env; set +a; \
 	  uvx --with argon2-cffi python $(BACKEND_DIR)/contract/seed.py "postgres://lumbung_app:$$POSTGRES_PASSWORD@127.0.0.1:$${DB_PORT:-15532}/lumbung"
+
+dev-smoke: ## smoke lintas-repo ke backend nyata di dev-stack
+	@set -a; . $(DEV_DIR)/.env; set +a; \
+	  BASE_URL=http://127.0.0.1:$(BACKEND_PORT) SERVICE_KEY=$$SERVICE_API_KEY DEVICE_KEY=$$DEVICE_API_KEY_GUDANG \
+	  ci/scripts/smoke-dev.sh

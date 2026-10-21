@@ -1,0 +1,47 @@
+# Dev-stack lokal Lumbung: backend (dibangun dari checkout lumbung-backend-service) + Postgres.
+# Jalankan lewat `make dev-up` (Makefile menyetel DEV_DIR/BACKEND_DIR). Env dibuat oleh deploy/dev/gen-env.sh
+# dari .env.example (nama saja) dengan nilai acak lokal; tidak ada rahasia di repo.
+name: lumbung-dev
+
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: lumbung_app
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?jalankan make dev-up}
+      POSTGRES_DB: lumbung
+    ports:
+      - "127.0.0.1:${DB_PORT:-15532}:5432"
+    volumes:
+      - lumbung-dev-pg:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lumbung_app -d lumbung"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  backend:
+    build:
+      context: ${BACKEND_DIR:?jalankan make dev-up}
+      dockerfile: ${DEV_DIR:?jalankan make dev-up}/backend.Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://lumbung_app:${POSTGRES_PASSWORD}@db:5432/lumbung
+      JWT_ED25519_PRIVATE: ${JWT_ED25519_PRIVATE:?jalankan make dev-up}
+      JWT_ED25519_PUBLIC: ${JWT_ED25519_PUBLIC:?jalankan make dev-up}
+      DEVICE_API_KEY_GUDANG: ${DEVICE_API_KEY_GUDANG:?jalankan make dev-up}
+      SERVICE_API_KEY: ${SERVICE_API_KEY:?jalankan make dev-up}
+      LISTEN_ADDR: 0.0.0.0:8080
+      RUST_LOG: ${RUST_LOG:-info}
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-18480}:8080"
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/healthz"]
+      interval: 3s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  lumbung-dev-pg:

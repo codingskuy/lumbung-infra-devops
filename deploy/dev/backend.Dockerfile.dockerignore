@@ -1,0 +1,6 @@
+target
+.git
+graphify-out
+contract/laporan
+contract/pact/node_modules
+.env

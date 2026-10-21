@@ -9,11 +9,12 @@ Aturan: nol nilai rahasia di repo. Nilai hanya ada di GitHub Actions secrets (pe
 |---|---|---|---|
 | `DATABASE_URL` | backend, deploy, backup | HANYA DB logis `lumbung` (pengguna `lumbung_app`, tanpa `SUPERUSER`) | saat insiden / personel keluar |
 | `JWT_ED25519_PRIVATE` | backend (penandatangan JWT, audiens `lumbung`) | environment backend saja | sesuai ADR keamanan; segera bila bocor |
+| `JWT_ED25519_PUBLIC` | backend / verifier JWT | kunci publik (bukan rahasia; disimpan sebagai variabel atau secret bila repo backend meminta) | ikut rotasi `JWT_ED25519_PRIVATE` |
 | `DEVICE_API_KEY_GUDANG` | perangkat gudang (satu kunci per gudang) | endpoint perangkat | 90 hari + tenggang 7 hari |
 | `SERVICE_API_KEY` | pipeline, ai-models (least-privilege: baca/ingest saja) | kontrak event | per ADR keamanan; ditinjau tiap 90 hari |
 | `LUMBUNG_API_KEY` | web (sisi server) | kunci API web | 90 hari; cabut 1 jam bila bocor |
 
-Catatan: issue LMB-OPS-004 mendaftar 4 secret; ADR-0001 dan AGENTS.md mendaftar 5 (tambahan `LUMBUNG_API_KEY`). Dokumen ini mengikuti ADR-0001 (5 secret).
+Keputusan: daftar rahasia mengikuti ADR-0001 = 5 secret (`DATABASE_URL`, `JWT_ED25519_PRIVATE`, `DEVICE_API_KEY_GUDANG`, `SERVICE_API_KEY`, `LUMBUNG_API_KEY`), ditambah `JWT_ED25519_PUBLIC` bila relevan. Issue #4 hanya menyebut 4 (tanpa `LUMBUNG_API_KEY`). Semua nama tercantum di `.env.example` tanpa nilai.
 
 Secret opsional rilis KMP: `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS`, `ANDROID_KEY_PASSWORD`, `MSIX_PFX_BASE64`, `MSIX_PFX_PASSWORD` (lihat `ci/build-kmp.md`).
 

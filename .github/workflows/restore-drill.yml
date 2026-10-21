@@ -1,0 +1,40 @@
+name: Latihan backup dan restore (mingguan)
+
+# Membuktikan skrip backup+restore berfungsi pada Postgres bersih tiap pekan.
+# Uji restore atas cadangan produksi sungguhan tetap manual (docs/backup-restore.md).
+on:
+  schedule:
+    - cron: "0 20 * * 0"   # Minggu 20:00 UTC = Senin 03:00 WIB
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  drill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: lumbung_ci
+          POSTGRES_PASSWORD: lumbung_ci
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U lumbung_ci" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      ADMIN_URL: postgres://lumbung_ci:lumbung_ci@localhost:5432/postgres
+      DATABASE_URL: postgres://lumbung_ci:lumbung_ci@localhost:5432/lumbung
+    steps:
+      - uses: actions/checkout@v4
+      - name: Siapkan DB lumbung contoh
+        run: |
+          psql "$ADMIN_URL" -c 'create database lumbung'
+          psql "$DATABASE_URL" -c "create table timbangan(id int primary key, gram int); insert into timbangan select g, g*100 from generate_series(1,500) g;"
+      - name: Backup
+        run: BACKUP_DIR="$RUNNER_TEMP/bk" deploy/backup/pg-backup.sh
+      - name: Uji restore
+        run: BACKUP_DIR="$RUNNER_TEMP/bk" deploy/backup/pg-restore-test.sh

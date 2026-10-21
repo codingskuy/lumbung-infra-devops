@@ -21,6 +21,12 @@
   ```
 - Hasilnya (direktori `.sqlx/`; format lama `sqlx-data.json` sudah usang) di-commit agar `cargo test` lolos tanpa DB hidup.
 
+## Rollback Rilis
+
+- Rollback otomatis: `deploy/scripts/deploy.sh` menjalankan `ROLLBACK_API_CMD` bila `healthz` gagal 3 kali beruntun (lihat `deploy/prod/README.md`). Rollback manual: jalankan ulang workflow `deploy.yml` dengan `version` rilis sebelumnya.
+- Migrasi basis data tidak ikut diputar balik otomatis; migrasi harus kompatibel mundur atau dipulihkan dari cadangan (`backup-restore.md`).
+- Kunci bocor: ikuti bagian "Kunci bocor" di [`rotasi-kunci.md`](rotasi-kunci.md) (cabut dalam 1 jam).
+
 ## Insiden Umum
 
 - `healthz` gagal cek DB: periksa `DATABASE_URL`, konektivitas, dan pool penuh.

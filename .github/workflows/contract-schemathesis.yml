@@ -1,0 +1,91 @@
+name: Schemathesis (reusable, manual)
+
+# Uji properti terhadap docs/api/openapi.yaml dan backend lokal. Memanggil contract/schemathesis.sh di repo backend
+# (LMB-BE-TEST-SCHEMATHESIS, lumbung-backend-service PR #17). Hanya manual/dipanggil; telemetri dimatikan.
+on:
+  workflow_call:
+    inputs:
+      backend-repo:
+        type: string
+        default: Coding-Skuy/lumbung-backend-service
+      backend-ref:
+        description: "Branch/tag/SHA backend yang berisi contract/schemathesis.sh."
+        type: string
+        default: main
+      max-examples:
+        type: string
+        default: "50"
+    secrets:
+      BACKEND_REPO_TOKEN:
+        description: "Token baca repo backend bila privat dan beda repo (opsional)."
+        required: false
+  workflow_dispatch:
+    inputs:
+      backend-ref:
+        description: "Branch/tag/SHA backend (mis. test/lmb-be-test-schemathesis sebelum PR #17 merge)"
+        type: string
+        default: main
+      max-examples:
+        type: string
+        default: "50"
+
+permissions:
+  contents: read
+
+jobs:
+  schemathesis:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: lumbung_ci
+          POSTGRES_PASSWORD: lumbung_ci
+          POSTGRES_DB: lumbung_uji
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U lumbung_ci -d lumbung_uji" --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      # Kredensial sekali pakai untuk DB uji CI; bukan rahasia produksi.
+      DATABASE_URL: postgres://lumbung_ci:lumbung_ci@localhost:5432/lumbung_uji
+      LISTEN_ADDR: 127.0.0.1:8080
+      SCHEMATHESIS_TELEMETRY: "off"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.backend-repo || 'Coding-Skuy/lumbung-backend-service' }}
+          ref: ${{ inputs.backend-ref || 'main' }}
+          token: ${{ secrets.BACKEND_REPO_TOKEN || github.token }}
+      - name: Pastikan skrip kontrak ada
+        run: |
+          test -x contract/schemathesis.sh || { echo "::error::contract/schemathesis.sh tidak ada di ref ini (butuh backend PR #17)"; exit 1; }
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: astral-sh/setup-uv@v5
+      - run: cargo build --locked
+      - name: Jalankan server (kunci sementara dibangkitkan di runner)
+        run: |
+          openssl genpkey -algorithm ed25519 -out "$RUNNER_TEMP/priv.pem"
+          openssl pkey -in "$RUNNER_TEMP/priv.pem" -pubout -out "$RUNNER_TEMP/pub.pem"
+          DEVICE_KEY="$(openssl rand -hex 16)"; SERVICE_KEY="$(openssl rand -hex 16)"
+          echo "::add-mask::$DEVICE_KEY"; echo "::add-mask::$SERVICE_KEY"
+          echo "DEVICE_KEY=$DEVICE_KEY" >> "$GITHUB_ENV"; echo "SERVICE_KEY=$SERVICE_KEY" >> "$GITHUB_ENV"
+          JWT_ED25519_PRIVATE="$(cat "$RUNNER_TEMP/priv.pem")" JWT_ED25519_PUBLIC="$(cat "$RUNNER_TEMP/pub.pem")" \
+          DEVICE_API_KEY_GUDANG="$DEVICE_KEY" SERVICE_API_KEY="$SERVICE_KEY" \
+            nohup ./target/debug/lumbung-backend-service > server.log 2>&1 &
+          for _ in $(seq 1 60); do curl -sf localhost:8080/healthz >/dev/null && exit 0; sleep 1; done
+          cat server.log; exit 1
+      - name: Schemathesis
+        env:
+          BASE_URL: http://127.0.0.1:8080/v1
+          MAX_EXAMPLES: ${{ inputs.max-examples }}
+        run: contract/schemathesis.sh
+      - name: Laporan
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: schemathesis-laporan
+          path: |
+            contract/laporan
+            server.log

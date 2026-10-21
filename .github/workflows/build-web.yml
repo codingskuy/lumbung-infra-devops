@@ -1,0 +1,47 @@
+name: Build Web Bun
+
+# Workflow reusable untuk lumbung-web (Bun + SvelteKit).
+on:
+  workflow_call:
+    inputs:
+      bun-version:
+        type: string
+        default: "1.4.x"
+      working-directory:
+        type: string
+        default: "."
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: ${{ inputs.working-directory || '.' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ inputs.bun-version || '1.4.x' }}
+      - name: Pasang dependensi
+        run: bun install --frozen-lockfile
+      - name: svelte-check
+        run: bun run check
+      - name: Uji unit (tidak boleh di-skip)
+        run: |
+          if grep -rEn '\b(it|test|describe)\.skip\b' src tests 2>/dev/null; then
+            echo "::error::Ditemukan tes yang di-skip (QA-002)."; exit 1
+          fi
+          bun test
+      - name: Build
+        run: bun run build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-build-${{ github.sha }}
+          path: ${{ inputs.working-directory || '.' }}/build/
+          if-no-files-found: error
+          retention-days: 30
